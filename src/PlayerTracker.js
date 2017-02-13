@@ -1,4 +1,5 @@
 var Packet = require('./packet');
+var Vec2 = require('./modules/Vec2');
 var BinaryWriter = require("./packet/BinaryWriter");
 
 function PlayerTracker(gameServer, socket) {
@@ -20,24 +21,18 @@ function PlayerTracker(gameServer, socket) {
     this.mergeOverride = false; // Triggered by console command
     this._score = 0; // Needed for leaderboard
     this._scale = 1;
-    this.isMassChanged = true;
     this.borderCounter = 0;
-    
+    this.connectedTime = new Date();
+
     this.tickLeaderboard = 0;
     this.team = 0;
     this.spectate = false;
     this.freeRoam = false;      // Free-roam mode enables player to move in spectate mode
     this.spectateTarget = null; // Spectate target, null for largest player
     this.lastKeypressTick = 0;
-    
-    this.centerPos = {
-        x: 0,
-        y: 0
-    };
-    this.mouse = {
-        x: 0,
-        y: 0
-    };
+
+    this.centerPos = new Vec2(0, 0);
+    this.mouse = new Vec2(0, 0);
     this.viewBox = {
         minx: 0,
         miny: 0,
@@ -46,20 +41,20 @@ function PlayerTracker(gameServer, socket) {
         halfWidth: 0,
         halfHeight: 0
     };
-    
+
     // Scramble the coordinate system for anti-raga
     this.scrambleX = 0;
     this.scrambleY = 0;
     this.scrambleId = 0;
     this.isMinion = false;
     this.isMuted = false;
-    
+
     // Custom commands
     this.spawnmass = 0;
     this.frozen = false;
     this.customspeed = 0;
     this.rec = false;
-    
+
     // Minions
     this.miQ = 0;
     this.isMi = false;
@@ -68,11 +63,9 @@ function PlayerTracker(gameServer, socket) {
     this.minionFrozen = false;
     this.minionControl = false;
     this.collectPellets = false;
-    
+
     // Gamemode function
     if (gameServer) {
-        this.centerPos.x = gameServer.border.centerx;
-        this.centerPos.y = gameServer.border.centery;
         // Player id
         this.pID = gameServer.lastPlayerId++ >> 0;
         // Gamemode function
@@ -110,25 +103,13 @@ PlayerTracker.prototype.scramble = function() {
 
 PlayerTracker.prototype.setName = function(name) {
     this._name = name;
-    if (!name || !name.length) {
-        this._nameUnicode = null;
-        this._nameUtf8 = null;
-        return;
-    }
     var writer = new BinaryWriter();
-    writer.writeStringZeroUnicode(name);
-    this._nameUnicode = writer.toBuffer();
-    writer = new BinaryWriter();
     writer.writeStringZeroUtf8(name);
     this._nameUtf8 = writer.toBuffer();
 };
 
 PlayerTracker.prototype.setSkin = function(skin) {
     this._skin = skin;
-    if (!skin || !skin.length) {
-        this._skinUtf8 = null;
-        return;
-    }
     var writer = new BinaryWriter();
     writer.writeStringZeroUtf8(skin);
     this._skinUtf8 = writer.toBuffer();
@@ -141,57 +122,50 @@ PlayerTracker.prototype.setColor = function(color) {
 };
 
 PlayerTracker.prototype.getScale = function() {
-    if (this.isMassChanged) this.updateMass();
-    return this._scale;
-};
-
-PlayerTracker.prototype.updateMass = function() {
-    this._score = 0; // reset to not cause bugs with playerlist
+    this._score = 0; // reset to not cause bugs with leaderboard
     for (var i = 0; i < this.cells.length; i++) {
-        var node = this.cells[i];
-        if (node === null) continue;
-        this._scale += node._size;
-        this._score += node._mass;
+        if (!this.cells[i]) continue;
+        this._scale += this.cells[i]._size;
+        this._score += this.cells[i]._mass;
     }
-    if (!this._scale) {
-        this._score = 0; // do not change score if no scale
-    } else {
-        this._scale = Math.pow(Math.min(64 / this._scale, 1), 0.4);
-    }
-    this.isMassChanged = false;
+    if (!this._scale) return this._scale = this._score = 0; // reset
+    else return this._scale = Math.pow(Math.min(64 / this._scale, 1), 0.4);
 };
 
 PlayerTracker.prototype.joinGame = function(name, skin) {
     if (this.cells.length) return;
+
     if (skin) this.setSkin(skin);
-    if (name === null) name = "An unnamed cell";
+    if (!name) name = "An unnamed cell";
     this.setName(name);
     this.spectate = false;
     this.freeRoam = false;
     this.spectateTarget = null;
-    
-    // some old clients don't understand ClearAll message
-    // so we will send update for them
-    if (this.socket.packetHandler.protocol < 6) {
-        this.socket.sendPacket(new Packet.UpdateNodes(this, [], [], [], this.clientNodes));
-    }
-    this.socket.sendPacket(new Packet.ClearAll());
-    this.clientNodes = [];
-    this.scramble();
-    if (this.gameServer.config.serverScrambleLevel < 2) {
-        // no scramble / lightweight scramble
-        this.socket.sendPacket(new Packet.SetBorder(this, this.gameServer.border));
-    }
-    else if (this.gameServer.config.serverScrambleLevel == 3) {
-        var ran = 10065536 * Math.random();
-        // Ruins most known minimaps (no border)
-        var border = {
-            minx: this.gameServer.border.minx - ran,
-            miny: this.gameServer.border.miny - ran,
-            maxx: this.gameServer.border.maxx + ran,
-            maxy: this.gameServer.border.maxy + ran
-        };
-        this.socket.sendPacket(new Packet.SetBorder(this, border));
+
+    if (!this.isMi && this.socket.isConnected != null) {
+        // some old clients don't understand ClearAll message
+        // so we will send update for them
+        if (this.socket.packetHandler.protocol < 6) {
+            this.socket.sendPacket(new Packet.UpdateNodes(this, [], [], [], this.clientNodes));
+        }
+        this.socket.sendPacket(new Packet.ClearAll());
+        this.clientNodes = [];
+        this.scramble();
+        if (this.gameServer.config.serverScrambleLevel < 2) {
+            // no scramble / lightweight scramble
+            this.socket.sendPacket(new Packet.SetBorder(this, this.gameServer.border));
+        }
+        else if (this.gameServer.config.serverScrambleLevel == 3) {
+            var ran = 10065536 * Math.random();
+            // Ruins most known minimaps (no border)
+            var border = {
+                minx: this.gameServer.border.minx - ran,
+                miny: this.gameServer.border.miny - ran,
+                maxx: this.gameServer.border.maxx + ran,
+                maxy: this.gameServer.border.maxy + ran
+            };
+            this.socket.sendPacket(new Packet.SetBorder(this, border));
+        }
     }
     this.gameServer.gameMode.onPlayerSpawn(this.gameServer, this);
 };
@@ -199,26 +173,22 @@ PlayerTracker.prototype.joinGame = function(name, skin) {
 PlayerTracker.prototype.checkConnection = function() {
     // Handle disconnection
     if (!this.socket.isConnected) {
-        // wait for playerDisconnectTime
-        var dt = (this.gameServer.stepDateTime - this.socket.closeTime) / 1000;
-        if (!this.cells.length || dt >= this.gameServer.config.playerDisconnectTime) {
+        // Wait for playerDisconnectTime
+        var pt = this.gameServer.config.playerDisconnectTime;
+        var dt = (this.gameServer.stepDateTime - this.socket.closeTime) / 1e3;
+        if (pt && (!this.cells.length || dt >= pt)) {
             // Remove all client cells
-            var cells = this.cells;
-            this.cells = [];
-            for (var i = 0; i < cells.length; i++) {
-                this.gameServer.removeNode(cells[i]);
-            }
-            // Mark to remove
-            this.isRemoved = true;
-            return;
+            while (this.cells.length) this.gameServer.removeNode(this.cells[0]);
         }
-        this.mouse.x = this.centerPos.x;
-        this.mouse.y = this.centerPos.y;
+        this.cells = [];
+        this.isRemoved = true;
+        this.mouse = null;
         this.socket.packetHandler.pressSpace = false;
         this.socket.packetHandler.pressQ = false;
         this.socket.packetHandler.pressW = false;
         return;
     }
+
     // Check timeout
     if (!this.isCloseRequested && this.gameServer.config.serverTimeout) {
         dt = (this.gameServer.stepDateTime - this.socket.lastAliveTime) / 1000;
@@ -230,44 +200,30 @@ PlayerTracker.prototype.checkConnection = function() {
 };
 
 PlayerTracker.prototype.updateTick = function() {
-    if (this.isRemoved) return;
+    if (this.isRemoved || this.isMinion)
+        return; // do not update
     this.socket.packetHandler.process();
-    if (this.gameServer.clients.length > 800 && this.isMi) return;
-    if (this.spectate) {
-        if (this.freeRoam || this.getSpectateTarget() == null) {
-            // free roam
-            this.updateCenterFreeRoam();
-            this._scale = this.gameServer.config.serverSpectatorScale; // 0.25;
-        } else {
-            // spectate target
-            return;
-        }
-    } else {
-        // in game
-        this.updateCenterInGame();
-    }
+    if (this.isMi) return;
+
     // update viewbox
+    this.updateSpecView(this.cells.length);
     var scale = Math.max(this.getScale(), this.gameServer.config.serverMinScale);
-    var halfWidth = (this.gameServer.config.serverViewBaseX / scale) / 2;
-    var halfHeight = (this.gameServer.config.serverViewBaseY / scale) / 2;
+    var halfWidth = this.gameServer.config.serverViewBaseX / scale / 2;
+    var halfHeight = this.gameServer.config.serverViewBaseY / scale / 2;
     this.viewBox = {
         minx: this.centerPos.x - halfWidth,
         miny: this.centerPos.y - halfHeight,
         maxx: this.centerPos.x + halfWidth,
-        maxy: this.centerPos.y + halfHeight,
-        halfWidth: halfWidth,
-        halfHeight: halfHeight
+        maxy: this.centerPos.y + halfHeight
     };
-    
+
     // update visible nodes
     this.viewNodes = [];
-    if (!this.isMinion || !this.isMi) {
-        var self = this;
-        this.gameServer.quadTree.find(this.viewBox, function(quadItem) {
-            if (quadItem.cell.owner != self)
-                self.viewNodes.push(quadItem.cell);
-        });
-    }
+    var self = this;
+    this.gameServer.quadTree.find(this.viewBox, function(quadItem) {
+        if (quadItem.cell.owner != self)
+            self.viewNodes.push(quadItem.cell);
+    });
     this.viewNodes = this.viewNodes.concat(this.cells);
     this.viewNodes.sort(function(a, b) { return a.nodeId - b.nodeId; });
 };
@@ -275,30 +231,30 @@ PlayerTracker.prototype.updateTick = function() {
 PlayerTracker.prototype.sendUpdate = function() {
     if (this.isRemoved || !this.socket.packetHandler.protocol ||
         !this.socket.isConnected || this.isMi || this.isMinion ||
-        (this.socket._socket.writable !== null && !this.socket._socket.writable) || 
+        (this.socket._socket.writable != null && !this.socket._socket.writable) || 
         this.socket.readyState != this.socket.OPEN) {
         // do not send update for disconnected clients
         // also do not send if initialization is not complete yet
         return;
     }
-    
+
     if (this.spectate) {
         if (!this.freeRoam) {
             // spectate target
-            var player = this.getSpectateTarget();
+            var player = this.getSpecTarget();
             if (player) {
-                this.setCenterPos(player.centerPos.x, player.centerPos.y);
-                this._scale = player.getScale();
+                this.setCenterPos(player.centerPos);
+                this._scale = player._scale;
                 this.viewBox = player.viewBox;
                 this.viewNodes = player.viewNodes;
             }
         }
         // sends camera packet
         this.socket.sendPacket(new Packet.UpdatePosition(
-            this, this.centerPos.x, this.centerPos.y, this.getScale()
+            this, this.centerPos.x, this.centerPos.y, this._scale
         ));
     }
-    
+
     if (this.gameServer.config.serverScrambleLevel == 2) {
         // scramble (moving border)
         if (!this.borderCounter) {
@@ -311,11 +267,9 @@ PlayerTracker.prototype.sendUpdate = function() {
             };
             this.socket.sendPacket(new Packet.SetBorder(this, bound));
         }
-        this.borderCounter++;
-        if (this.borderCounter >= 20)
-            this.borderCounter = 0;
+        if (++this.borderCounter >= 20) this.borderCounter = 0;
     }
-    
+
     var delNodes = [];
     var eatNodes = [];
     var addNodes = [];
@@ -330,7 +284,7 @@ PlayerTracker.prototype.sendUpdate = function() {
         }
         if (this.viewNodes[newIndex].nodeId > this.clientNodes[oldIndex].nodeId) {
             var node = this.clientNodes[oldIndex];
-            if (node.isRemoved && node.killedBy !== null && node.owner != node.killedBy.owner)
+            if (node.isRemoved && node.killedBy && node.owner != node.killedBy.owner)
                 eatNodes.push(node);
             else
                 delNodes.push(node);
@@ -339,91 +293,72 @@ PlayerTracker.prototype.sendUpdate = function() {
         }
         var node = this.viewNodes[newIndex];
         // skip food & eject if not moving
+        if (node.isRemoved) continue;
         if (node.isMoving || (node.cellType != 1 && node.cellType != 3))
             updNodes.push(node);
         newIndex++;
         oldIndex++;
     }
-    for (; newIndex < this.viewNodes.length; ) {
+    for (; newIndex < this.viewNodes.length; newIndex++)
         addNodes.push(this.viewNodes[newIndex]);
-        newIndex++;
-    }
-    for (; oldIndex < this.clientNodes.length; ) {
+
+    for (; oldIndex < this.clientNodes.length; oldIndex++) {
         var node = this.clientNodes[oldIndex];
-        if (node.isRemoved && node.killedBy !== null && node.owner != node.killedBy.owner)
+        if (node.isRemoved && node.killedBy && node.owner != node.killedBy.owner)
             eatNodes.push(node);
         else
             delNodes.push(node);
-        oldIndex++;
     }
     this.clientNodes = this.viewNodes;
-    
-    // Send packet
-    this.socket.sendPacket(new Packet.UpdateNodes(
-        this, addNodes, updNodes, eatNodes, delNodes)
-    );
-    
+
+    // Send update packet
+    this.socket.sendPacket(new Packet.UpdateNodes(this, addNodes, updNodes, eatNodes, delNodes));
+
     // Update leaderboard
     if (++this.tickLeaderboard > 25) {
         // 1 / 0.040 = 25 (once per second)
         this.tickLeaderboard = 0;
-        if (this.gameServer.leaderboardType >= 0) {
-            var packet = new Packet.UpdateLeaderboard(this, this.gameServer.leaderboard, this.gameServer.leaderboardType);
-            this.socket.sendPacket(packet);
+        if (this.gameServer.leaderboardType >= 0)
+            this.socket.sendPacket(new Packet.UpdateLeaderboard(this, this.gameServer.leaderboard, this.gameServer.leaderboardType));
+    }
+};
+
+PlayerTracker.prototype.updateSpecView = function(len) {
+    if (!this.spectate && len) {
+        // in game
+        var cx = 0, cy = 0;
+        for (var i = 0; i < len; i++) {
+            cx += this.cells[i].position.x / len;
+            cy += this.cells[i].position.y / len;
+            this.centerPos = new Vec2(cx, cy);
         }
+    } else {
+        if (this.freeRoam || this.getSpecTarget() == null) {
+            // free roam
+            var d = this.mouse.clone().sub(this.centerPos);
+            this.setCenterPos(this.centerPos.add2(d, 32 / d.sqDist(d)));
+            this._scale = Math.max(this.gameServer.config.serverSpectatorScale, this.getScale());
+        } else
+            // spectate target
+            this.viewBox = null;
     }
-};
-
-PlayerTracker.prototype.updateCenterInGame = function() { // Get center of cells
-    if (!this.cells.length) return;
-    var cx = 0;
-    var cy = 0;
-    var count = 0;
-    for (var i = 0; i < this.cells.length; i++) {
-        var node = this.cells[i];
-        cx += node.position.x;
-        cy += node.position.y;
-        count++;
-    }
-    if (!count) return;
-    this.centerPos.x = cx / count;
-	this.centerPos.y = cy / count;
-};
-
-PlayerTracker.prototype.updateCenterFreeRoam = function() {
-    var dx = this.mouse.x - this.centerPos.x;
-    var dy = this.mouse.y - this.centerPos.y;
-    var squared = dx * dx + dy * dy;
-    if (squared < 1) return; // stop threshold
-    // distance
-    var d = Math.sqrt(squared);
-    var nx = dx / d;
-    var ny = dy / d;
-    // speed of viewbox
-    var speed = Math.min(d, 32);
-    if (!speed) return;
-    
-    var x = this.centerPos.x + nx * speed;
-    var y = this.centerPos.y + ny * speed;
-    this.setCenterPos(x, y);
-};
+}
 
 PlayerTracker.prototype.pressSpace = function() {
     if (this.spectate) {
         // Check for spam first (to prevent too many add/del updates)
-        var tick = this.gameServer.tickCounter;
-        if (tick - this.lastKeypressTick < 40)
+        if (this.gameServer.tickCounter - this.lastKeypressTick < 40)
             return;
-        this.lastKeypressTick = tick;
-        
+        this.lastKeypressTick = this.gameServer.tickCounter;
+
         // Space doesn't work for freeRoam mode
-        if (this.freeRoam || this.gameServer.largestClient === null)
+        if (this.freeRoam || this.gameServer.largestClient == null)
             return;
     } else if (this.gameServer.run) {
         // Disable mergeOverride on the last merging cell
-        if (this.cells.length <= 2) {
+        if (this.cells.length <= 2)
             this.mergeOverride = false;
-        }
+        // Cant split if merging or frozen
         if (this.mergeOverride || this.frozen) 
             return;
         this.gameServer.splitCells(this);
@@ -431,42 +366,35 @@ PlayerTracker.prototype.pressSpace = function() {
 };
 
 PlayerTracker.prototype.pressW = function() {
-    if (this.spectate) {
-        return;
-    }
-    else if (this.gameServer.run) {
-        this.gameServer.ejectMass(this);
-    }
+    if (this.spectate || !this.gameServer.run) return;
+    this.gameServer.ejectMass(this);
 };
 
 PlayerTracker.prototype.pressQ = function() {
     if (this.spectate) {
         // Check for spam first (to prevent too many add/del updates)
-        var tick = this.gameServer.tickCounter;
-        if (tick - this.lastKeypressTick < 40)
+        if (this.gameServer.tickCounter - this.lastKeypressTick < 40)
             return;
-        this.lastKeypressTick = tick;
-        
-        if (this.spectateTarget == null) {
+
+        this.lastKeypressTick = this.gameServer.tickCounter;
+        if (this.spectateTarget == null)
             this.freeRoam = !this.freeRoam;
-        }
         this.spectateTarget = null;
     }
 };
 
-PlayerTracker.prototype.getSpectateTarget = function() {
-    if (this.spectateTarget === null || this.spectateTarget.isRemoved || this.spectateTarget.cells.length < 1) {
+PlayerTracker.prototype.getSpecTarget = function() {
+    if (this.spectateTarget == null || this.spectateTarget.isRemoved) {
         this.spectateTarget = null;
         return this.gameServer.largestClient;
     }
     return this.spectateTarget;
 };
 
-PlayerTracker.prototype.setCenterPos = function(x, y) {
-    x = Math.max(x, this.gameServer.border.minx);
-    y = Math.max(y, this.gameServer.border.miny);
-    x = Math.min(x, this.gameServer.border.maxx);
-    y = Math.min(y, this.gameServer.border.maxy);
-    this.centerPos.x = x;
-    this.centerPos.y = y;
+PlayerTracker.prototype.setCenterPos = function(p) {
+    p.x = Math.max(p.x, this.gameServer.border.minx);
+    p.y = Math.max(p.y, this.gameServer.border.miny);
+    p.x = Math.min(p.x, this.gameServer.border.maxx);
+    p.y = Math.min(p.y, this.gameServer.border.maxy);
+    this.centerPos = p;
 };

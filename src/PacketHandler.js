@@ -133,9 +133,8 @@ PacketHandler.prototype.message_onKeyQ = function (message) {
         return;
     }
     this.lastQTick = tick;
-    if (this.socket.playerTracker.minionControl) {
-        if (!this.gameServer.config.disableQ) 
-            this.socket.playerTracker.miQ = !this.socket.playerTracker.miQ;
+    if (this.socket.playerTracker.minionControl && !this.gameServer.config.disableQ) {
+        this.socket.playerTracker.miQ = !this.socket.playerTracker.miQ;
     } else {
         this.pressQ = true;
     }

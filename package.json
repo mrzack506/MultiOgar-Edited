@@ -7,8 +7,7 @@
     "license": "Apache-2.0",
     "main": "src/index.js",
     "dependencies": {
-        "vector2-node": "latest",
-        "ws": "latest"
+        "ws": "1.1.0"
     },
     "devDependencies": {},
     "scripts": {

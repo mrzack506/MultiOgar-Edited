@@ -118,8 +118,8 @@ Commands.list = {
                     "- Food:        " + fillChar(gameServer.nodesFood.length, " ", 4, true) + " / " + gameServer.config.foodMaxAmount+"\n"+
                     "- Viruses:      " + fillChar(gameServer.nodesVirus.length, " ", 4, true) + " / " + gameServer.config.virusMaxAmount+"\n"+
                     "Moving nodes:   " + fillChar(gameServer.movingNodes.length, " ", 4, true)+"\n"+
-                    "Quad nodes:     " + fillChar(gameServer.quadTree.scanNodeCount(), " ", 4, true)+"\n"+
-                    "Quad items:     " + fillChar(gameServer.quadTree.scanItemCount(), " ", 4, true));
+                    "Quad nodes:     " + fillChar(scanNodeCount(gameServer.quadTree), " ", 4, true)+"\n"+
+                    "Quad items:     " + fillChar(scanItemCount(gameServer.quadTree), " ", 4, true));
     },
     reset: function(gameServer, split) {
         Logger.warn("Removed " + gameServer.nodes.length + " nodes");
@@ -184,7 +184,7 @@ Commands.list = {
         // Error message
         var logInvalid = "Please specify a valid player ID or IP address!";
         
-        if (split[1] === null) {
+        if (split[1] === null || typeof split[1] == "undefined") {
             // If no input is given; added to avoid error
             Logger.warn(logInvalid);
             return;
@@ -202,17 +202,10 @@ Commands.list = {
                     continue;
                 }
                 // If not numerical or if it's not between 0 and 255
-                // TODO: Catch string "e" as it means "10^".
                 if (isNaN(ipParts[i]) || ipParts[i] < 0 || ipParts[i] >= 256) {
                     Logger.warn(logInvalid);
                     return;
                 }
-            }
-            
-            if (ipParts.length != 4) {
-                // an IP without 3 decimals
-                Logger.warn(logInvalid);
-                return;
             }
             ban(gameServer, split, ip);
             return;
@@ -350,6 +343,7 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 client.setColor(color); // Set color
                 for (var j in client.cells) {
                     client.cells[j].setColor(color);
@@ -357,6 +351,8 @@ Commands.list = {
                 break;
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
+        Logger.print("Changed " + getName(client._name) + "'s color to: " + color.r + ", " + color.g + ", " + color.b);
     },
     exit: function(gameServer, split) {
         Logger.warn("Closing server...");
@@ -387,7 +383,7 @@ Commands.list = {
         }, this);
         if (count) return;
         if (!id) Logger.warn("No players to kick!");
-        else Logger.warn("Player with ID " + id + " not found!");
+        else Logger.warn("That player ID (" + id + ") is non-existant!");
     },
     mute: function(gameServer, args) {
         if (!args || args.length < 2) {
@@ -401,11 +397,11 @@ Commands.list = {
         }
         var player = playerById(id, gameServer);
         if (!player) {
-            Logger.warn("Player with id=" + id + " not found!");
+            Logger.warn("That player ID (" + id + ") is non-existant!");
             return;
         }
         if (player.isMuted) {
-            Logger.warn("Player with id=" + id + " already muted!");
+            Logger.warn("That player with ID (" + id + ") is already muted!");
             return;
         }
         Logger.print("Player \"" + getName(player._name) + "\" was muted");
@@ -423,7 +419,7 @@ Commands.list = {
         }
         var player = playerById(id, gameServer);
         if (player === null) {
-            Logger.warn("Player with id=" + id + " not found!");
+            Logger.warn("That player ID (" + id + ") is non-existant!");
             return;
         }
         if (!player.isMuted) {
@@ -454,7 +450,7 @@ Commands.list = {
       
         if (count) return;
         if (!this.id) Logger.warn("No players to kick!");
-        else Logger.warn("Player with ID " + this.id + " not found!");
+        else Logger.warn("That player ID (" + this.id + ") is non-existant!");
     },
     kill: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -477,6 +473,7 @@ Commands.list = {
                 break;
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     killall: function(gameServer, split) {
         var count = 0;
@@ -507,6 +504,7 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 for (var j in client.cells) {
                     client.cells[j].setSize(size);
                 }
@@ -514,6 +512,7 @@ Commands.list = {
                 break;
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     spawnmass: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -537,6 +536,7 @@ Commands.list = {
                 Logger.print("Set spawnmass of "+ getName(client._name) + " to " + (size * size / 100).toFixed(3));
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },   
     speed: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -557,16 +557,15 @@ Commands.list = {
                 client.customspeed = speed;
                 // override getSpeed function from PlayerCell
                 Entity.PlayerCell.prototype.getSpeed = function (dist) {
-                    var speed = 2.1106 / Math.pow(this._size, 0.449);
-                    var normalizedDist = Math.min(dist, 32) / 32;
-                    // tickStep = 40ms
-                    this._speed = (this.owner.customspeed > 0) ? 
+                    var speed = 2.2 * Math.pow(this._size, -0.439);
+                    speed = this.owner.customspeed ?
                     speed * 40 * this.owner.customspeed : // Set by command
                     speed * 40 * this.gameServer.config.playerSpeed;
-                    return this._speed * normalizedDist;
+                    return Math.min(dist, speed) / dist;
                 };
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
         Logger.print("Set base speed of " + getName(client._name) + " to " + speed);
     },
     merge: function(gameServer, split) {
@@ -581,16 +580,15 @@ Commands.list = {
         for (var i = 0; i < gameServer.clients.length; i++) {
             if (id == gameServer.clients[i].playerTracker.pID) {
                 var client = gameServer.clients[i].playerTracker;
-                if (client.cells.length == 1) {
-                    Logger.warn("Client already has one cell!");
-                    return;
-                }
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
+                if (client.cells.length == 1) return Logger.warn("Client already has one cell!");
                 // Set client's merge override
                 client.mergeOverride = !client.mergeOverride;
                 if (client.mergeOverride) Logger.print(getName(client._name) + " is now force merging");
                 else Logger.print(getName(client._name) + " isn't force merging anymore");
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     rec: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -608,6 +606,7 @@ Commands.list = {
                 else Logger.print(getName(client._name) + " is no longer in rec mode");
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     split: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -627,6 +626,7 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 for (var i = 0; i < count; i++) {
                     gameServer.splitCells(client);
                 }
@@ -634,6 +634,7 @@ Commands.list = {
                 break;
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     name: function(gameServer, split) {
         // Validation checks
@@ -652,7 +653,7 @@ Commands.list = {
         // Change name
         for (var i = 0; i < gameServer.clients.length; i++) {
             var client = gameServer.clients[i].playerTracker;
-            
+            if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
             if (client.pID == id) {
                 Logger.print("Changing " + getName(client._name) + " to " + name);
                 client.setName(name);
@@ -661,7 +662,7 @@ Commands.list = {
         }
         
         // Error
-        Logger.warn("Player " + id + " was not found");
+        Logger.warn("That player ID (" + id + ") is non-existant!");
     },
     skin: function(gameServer, args) {
         if (!args || args.length < 3) {
@@ -679,7 +680,7 @@ Commands.list = {
         }
         var player = playerById(id, gameServer);
         if (!player) {
-            Logger.warn("Player with id =" + id + " not found!");
+            Logger.warn("That player ID (" + id + ") is non-existant!");
             return;
         }
         if (player.cells.length) {
@@ -714,26 +715,23 @@ Commands.list = {
         for (var i = 0; i < sockets.length; i++) {
             var socket = sockets[i];
             var client = socket.playerTracker;
-            var ip = client.isMi ? "[MINION]" : "[BOT]";
             var type = split[1];
-            
-            // list minions
-            if (client.isMi) {
-                if (type != "m") continue;
-                else ip = "[MINION]";
-            }
             
             // ID with 3 digits length
             var id = fillChar((client.pID), ' ', 6, true);
             
             // Get ip (15 digits length)
-            if (socket.isConnected != null) {
+            var ip = client.isMi ? "[MINION]" : "[BOT]";
+            if (socket.isConnected && !client.isMi) {
                 ip = socket.remoteAddress;
+            } else if (client.isMi && type != "m") {
+                continue; // do not list minions
             }
             ip = fillChar(ip, ' ', 15);
+            
+            // Get name and data
             var protocol = gameServer.clients[i].packetHandler.protocol;
             if (!protocol) protocol = "?";
-            // Get name and data
             var nick = '',
                 cells = '',
                 score = '',
@@ -747,23 +745,21 @@ Commands.list = {
                 if (socket.closeReason.message)
                     reason += socket.closeReason.message;
                 Logger.print(" " + id + " | " + ip + " | " + protocol + " | " + reason);
-            } else if (!socket.packetHandler.protocol && socket.isConnected) {
+            } else if (!socket.packetHandler.protocol && socket.isConnected && !client.isMi) {
                 Logger.print(" " + id + " | " + ip + " | " + protocol + " | " + "[CONNECTING]");
             } else if (client.spectate) {
                 nick = "in free-roam";
                 if (!client.freeRoam) {
-                    var target = client.getSpectateTarget();
-                    if (target != null) {
-                        nick = getName(target._name);
-                    }
+                    var target = client.getSpecTarget();
+                    if (target) nick = getName(target._name);
                 }
                 data = fillChar("SPECTATING: " + nick, '-', ' | CELLS | SCORE  | POSITION    '.length + gameServer.config.playerMaxNickLength, true);
                 Logger.print(" " + id + " | " + ip + " | " + protocol + " | " + data);
             } else if (client.cells.length) {
                 nick = fillChar(getName(client._name), ' ', gameServer.config.playerMaxNickLength);
                 cells = fillChar(client.cells.length, ' ', 5, true);
-                score = fillChar(client._score >> 0, ' ', 6, true);
-                position = fillChar(client.centerPos.x >> 0, ' ', 5, true) + ', ' + fillChar(client.centerPos.y >> 0, ' ', 5, true);
+                score = fillChar(getScore(client) >> 0, ' ', 6, true);
+                position = fillChar(getPos(client).x >> 0, ' ', 5, true) + ', ' + fillChar(getPos(client).y >> 0, ' ', 5, true);
                 Logger.print(" " + id + " | " + ip + " | " + protocol + " | " + cells + " | " + score + " | " + position + " | " + nick);
             } else {
                 // No cells = dead player or in-menu
@@ -787,12 +783,14 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 // set frozen state
                 client.frozen = !client.frozen;
                 if (client.frozen) Logger.print("Froze " + getName(client._name));
                 else Logger.print("Unfroze " + getName(client._name));
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     reload: function(gameServer, split) {
         gameServer.loadConfig();
@@ -840,6 +838,7 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 for (var j in client.cells) {
                     client.cells[j].position.x = pos.x;
                     client.cells[j].position.y = pos.y;
@@ -849,6 +848,7 @@ Commands.list = {
                 break;
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     spawn: function(gameServer, split) {
         var ent = split[1];
@@ -912,6 +912,7 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 while (client.cells.length > 0) {
                     var cell = client.cells[0];
                     gameServer.removeNode(cell);
@@ -919,20 +920,25 @@ Commands.list = {
                     if (ent == "virus") {
                         var virus = new Entity.Virus(gameServer, null, cell.position, cell._size);
                         gameServer.addNode(virus);
-                        Logger.print("Replaced " + getName(client._name) + " with a virus");
                     } else if (ent == "food") {
                         var food = new Entity.Food(gameServer, null, cell.position, cell._size);
                         food.setColor(gameServer.getRandomColor());
                         gameServer.addNode(food);
-                        Logger.print("Replaced " + getName(client._name) + " with a food cell");
                     } else if (ent == "mothercell") {
                         var mother = new Entity.MotherCell(gameServer, null, cell.position, cell._size);
                         gameServer.addNode(mother);
-                        Logger.print("Replaced " + getName(client._name) + " with a mothercell");
                     }
                 }
             }
         }
+        if (ent == "virus") {
+            Logger.print("Replaced " + getName(client._name) + " with a virus");
+        } else if (ent == "food") {
+            Logger.print("Replaced " + getName(client._name) + " with a food cell");
+        } else if (ent == "mothercell") {
+            Logger.print("Replaced " + getName(client._name) + " with a mothercell");
+        }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     pop: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -943,11 +949,13 @@ Commands.list = {
         for (var i in gameServer.clients) {
             if (gameServer.clients[i].playerTracker.pID == id) {
                 var client = gameServer.clients[i].playerTracker;
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 var virus = new Entity.Virus(gameServer, null, client.centerPos, gameServer.config.virusMinSize);
                 gameServer.addNode(virus);
                 Logger.print("Popped " + getName(client._name));
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     explode: function(gameServer, split) {
         var id = parseInt(split[1]);
@@ -962,25 +970,27 @@ Commands.list = {
                     var cell = client.cells[i];
                     while (cell._size > gameServer.config.playerMinSize) {
                         // remove mass from parent cell
-                        var Agarian = 6.28 * Math.random();
+                        var angle = 6.28 * Math.random();
                         var loss = gameServer.config.ejectSizeLoss;
                         var size = cell._sizeSquared - loss * loss;
                         cell.setSize(Math.sqrt(size));
                         // explode the cell
                         var pos = {
-                            x: cell.position.x + Agarian,
-                            y: cell.position.y + Agarian
+                            x: cell.position.x + angle,
+                            y: cell.position.y + angle
                         };
                         var ejected = new Entity.EjectedMass(gameServer, null, pos, gameServer.config.ejectSize);
                         ejected.setColor(cell.color);
-                        ejected.setBoost(780 * Math.random(), Agarian);
+                        ejected.setBoost(gameServer.config.ejectVelocity * Math.random(), angle);
                         gameServer.addNode(ejected);
                     }
                     cell.setSize(gameServer.config.playerMinSize);
                 }
+                if (!client.cells.length) return Logger.warn("That player is either dead or not playing!");
                 Logger.print("Successfully exploded " + getName(client._name));
             }
         }
+        if (client == null) return void Logger.warn("That player ID is non-existant!");
     },
     lms: function(gameServer, split) {
         gameServer.disableSpawn = !gameServer.disableSpawn;
@@ -1083,7 +1093,7 @@ function ban(gameServer, split, ip) {
     }
     gameServer.clients.forEach(function (socket) {
         // If already disconnected or the ip does not match
-        if (!socket || !socket.isConnected || !gameServer.checkIpBan(socket.remoteAddress))
+        if (!socket || !socket.isConnected || !gameServer.checkIpBan(ip) || socket.remoteAddress != ip)
             return;
         // remove player cells
         Commands.list.kill(gameServer, split);
@@ -1103,3 +1113,40 @@ function getName(name) {
         name = "An unnamed cell";
     return name.trim();
 }
+
+function getScore(client) {
+    var score = 0; // reset to not cause bugs
+    for (var i = 0; i < client.cells.length; i++) {
+        if (!client.cells[i]) continue;
+        score += client.cells[i]._mass;
+    }
+    return score;
+};
+
+function getPos(client) {
+    for (var i = 0; i < client.cells.length; i++) {
+        if (!client.cells[i]) continue;
+        return {
+            x: client.cells[i].position.x / client.cells.length,
+            y: client.cells[i].position.y / client.cells.length
+        }
+    }
+}
+
+// functions from QuadNode
+
+function scanNodeCount(quad) {
+    var count = 0;
+    for (var i = 0; i < quad.childNodes.length; i++) {
+        count += scanNodeCount(quad.childNodes[i]);
+    }
+    return 1 + count;
+};
+
+function scanItemCount(quad) {
+    var count = 0;
+    for (var i = 0; i < quad.childNodes.length; i++) {
+        count += scanItemCount(quad.childNodes[i]);
+    }
+    return quad.items.length + count;
+};
